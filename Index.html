@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Loan EMI & Prepayment Planner — Fixed</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root{
+      --primary:#0078D7; --primary-dark:#005fa3; --bg:#f0f4f8; --card:#fff;
+      --success:#28a745; --danger:#dc3545;
+    }
+    body{font-family:'Segoe UI',Arial,sans-serif;margin:20px;background:var(--bg);color:#333}
+    h1{text-align:center;color:var(--primary-dark);margin-bottom:18px}
+    .section{background:var(--card);padding:18px;margin:14px auto;border-radius:10px;
+             box-shadow:0 3px 10px rgba(0,0,0,0.08);max-width:900px}
+    label{display:block;margin-top:10px;font-weight:600}
+    input,select{width:100%;padding:10px;margin-top:6px;border-radius:6px;border:1px solid #cfcfcf}
+    button{margin-top:14px;padding:10px 14px;border-radius:8px;border:none;background:var(--primary);
+           color:#fff;cursor:pointer;font-weight:600}
+    .reset-btn{background:var(--danger);margin-left:8px}
+    .words{font-style:italic;color:#555;margin-top:6px}
+    .result{margin-top:14px;padding:12px;border-radius:8px;font-weight:700}
+    .positive{background:#e8f9ee;color:var(--success)}
+    .negative{background:#fde8e8;color:var(--danger)}
+    .flex{display:flex;gap:12px;flex-wrap:wrap}
+    .half{flex:1;min-width:260px}
+    canvas{max-width:880px;margin-top:12px}
+    .small{font-weight:600;font-size:0.95em}
+  </style>
+</head>
+<body>
+  <h1>💰 Loan EMI & Prepayment Planner — (Calculations Fixed)</h1>
+  <div class="section">
+    <h2>1. EMI Calculator</h2>
+    <div class="flex">
+      <div class="half">
+        <label>Loan Amount (₹)</label>
+        <input id="loanAmount" type="number" value="8000000" oninput="showInWords(this.value,'amountWords')">
+        <div id="amountWords" class="words"></div>
+      </div>
+      <div class="half">
+        <label>Interest Rate (% p.a.)</label>
+        <input id="interestRate" type="number" value="7.5">
+      </div>
+    </div>
+    <div class="flex">
+      <div class="half">
+        <label>Tenure (years)</label>
+        <input id="tenureYears" type="number" value="12">
+      </div>
+      <div class="half" style="align-self:end">
+        <button onclick="calculateEMI()">Calculate EMI</button>
+        <button class="reset-btn" onclick="resetAll()">Reset</button>
+      </div>
+    </div>
+    <div id="emiResult" class="result"></div>
+    <canvas id="emiPieChart"></canvas>
+  </div>
+  <div class="section">
+    <h2>2. Prepayment Option 1 — Target Loan Closure</h2>
+    <div class="flex">
+      <div class="half">
+        <label>Target Duration (years)</label>
+        <input id="targetYears" type="number" value="6">
+      </div>
+      <div class="half">
+        <label>Extra Payment Frequency</label>
+        <select id="frequency1">
+          <option value="monthly">Monthly</option>
+          <option value="quarterly">Quarterly</option>
+          <option value="yearly">Yearly</option>
+        </select>
+      </div>
+    </div>
+    <div class="flex">
+      <div style="flex:1; min-width:260px">
+        <button onclick="calculateExtraPayment()">Calculate Required Extra</button>
+      </div>
+    </div>
+    <div id="extraPaymentResult" class="result negative"></div>
+  </div>
+  <div class="section">
+    <h2>3. Prepayment Option 2 — Recurring Prepayment (Estimate Tenure)</h2>
+    <div class="flex">
+      <div class="half">
+        <label>Recurring Prepayment Amount (₹)</label>
+        <input id="prepaymentAmount" type="number" value="120000" oninput="showInWords(this.value,'prepaymentWords')">
+        <div id="prepaymentWords" class="words"></div>
+      </div>
+      <div class="half">
+        <label>Prepayment Frequency</label>
+        <select id="frequency2">
+          <option value="monthly">Monthly</option>
+          <option value="quarterly">Quarterly</option>
+          <option value="yearly">Yearly</option>
+        </select>
+      </div>
+    </div>
+    <div class="flex">
+      <div style="flex:1;min-width:260px">
+        <button onclick="calculateReducedTenure()">Estimate Tenure & Show Charts</button>
+      </div>
+    </div>
+    <div id="reducedTenureResult" class="result positive"></div>
+    <canvas id="balanceCompareChart"></canvas>
+  </div>
+<script>
+/* ---------------------------
+   Helpers: formatting & words
+   --------------------------- */
+function formatINR(x){
+  if (!isFinite(x)) return '₹0';
+  return x.toLocaleString('en-IN', { style:'currency', currency:'INR', maximumFractionDigits:2 });
+}
+// Indian-style number to words (handles up to crores reasonably)
+function numberToWordsIndia(num){
+  num = Math.round(num);
+  if (num === 0) return 'Zero';
+  const ones = ["","One","Two","Three","Four","Five","Six","Seven","Eight","Nine",
+                "Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen",
+                "Eighteen","Nineteen"];
+  const tens = ["","","Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
+  function twoDigit(n){
+    if (n < 20) return ones[n];
+    return tens[Math.floor(n/10)] + (n%10 ? " " + ones[n%10] : "");
+  }
+  function threeDigit(n){
+    let str = "";
+    if (n >= 100){ str += ones[Math.floor(n/100)] + " Hundred"; n = n % 100; if (n) str += " "; }
+    if (n) str += twoDigit(n);
+    return str;
+  }
+  let res = "";
+  if (num >= 10000000){
+    const cr = Math.floor(num / 10000000);
+    res += threeDigit(cr) + " Crore ";
+    num = num % 10000000;
+  }
+  if (num >= 100000){
+    const lk = Math.floor(num / 100000);
+    res += threeDigit(lk) + " Lakh ";
+    num = num % 100000;
+  }
+  if (num >= 1000){
+    const th = Math.floor(num / 1000);
+    res += threeDigit(th) + " Thousand ";
+    num = num % 1000;
+  }
+  if (num > 0) res += threeDigit(num);
+  return res.trim();
+}
+function showInWords(num, targetId){
+  const el = document.getElementById(targetId);
+  if (!num || isNaN(num) || Number(num) === 0) { el.innerText = ''; return; }
+  el.innerText = numberToWordsIndia(Number(num)) + " Rupees";
+}
+/* ---------------------------
+   Core amortization helpers
+   --------------------------- */
+function calcEMI(P, annualRate, years){
+  if (!P || P <= 0) return { emi: 0, months: 0 };
+  const r = annualRate / 12 / 100;
+  const N = Math.round(years * 12);
+  if (r === 0) return { emi: P / N, months: N };
+  const pow = Math.pow(1 + r, N);
+  const emi = P * r * pow / (pow - 1);
+  return { emi, months: N, monthlyRate: r };
+}
+// Simulate amortization for given parameters.
+// If stopAtMonths specified, simulation stops at that month (used for target calc).
+// Returns object: { balanceHistory[], monthsPaid, totalPrincipal, totalInterest, totalPaid, extrasApplied }
+function simulateAmortization({principal, monthlyRate, emi, maxMonths = 600, extraPerPayment = 0, freq='monthly', stopAtMonths = null}){
+  const balanceHistory = [];
+  let balance = principal;
+  let months = 0;
+  let totalInterest = 0;
+  let totalPaid = 0;
+  let extrasApplied = 0;
+  const freqGap = freq === 'monthly' ? 1 : (freq === 'quarterly' ? 3 : 12);
+  while (balance > 1e-8 && months < maxMonths){
+    months++;
+    // compute monthly interest on current balance
+    const interest = balance * monthlyRate;
+    // nominal principal portion from EMI
+    let principalPortion = emi - interest;
+    // If this EMI principal portion would overpay (final month), adjust final payment
+    if (principalPortion > balance){
+      // final payment = balance + interest
+      const finalPayment = balance + interest;
+      totalInterest += interest;
+      totalPaid += finalPayment;
+      balance = 0;
+      balanceHistory.push(0);
+      break;
+    } else {
+      balance -= principalPortion;
+      totalInterest += interest;
+      totalPaid += emi;
+      balanceHistory.push(Math.max(balance, 0));
+    }
+    // Apply extra payment at scheduled months (after EMI principal applied)
+    if ((months % freqGap) === 0 && extraPerPayment > 0 && balance > 0){
+      const extra = Math.min(extraPerPayment, balance);
+      balance -= extra;
+      totalPaid += extra;
+      extrasApplied++;
+      balanceHistory[balanceHistory.length - 1] = Math.max(balance, 0); // update last snapshot
+      if (balance <= 0) { balance = 0; break; }
+    }
+    // Allow interrupt when we only wanted to simulate up to a target months
+    if (stopAtMonths && months >= stopAtMonths) break;
+  }
+  return {
+    balanceHistory,
+    monthsPaid: months,
+    totalInterest,
+    totalPaid,
+    extrasApplied
+  };
+}
+/* ---------------------------
+   Chart helpers
+   --------------------------- */
+let emiPie = null;
+let balanceChart = null;
+function drawEmiPie(principal, totalInterest){
+  const ctx = document.getElementById('emiPieChart').getContext('2d');
+  if (emiPie) emiPie.destroy();
+  emiPie = new Chart(ctx, {
+    type: 'pie',
+    data: {
+      labels: ['Principal', 'Interest'],
+      datasets: [{ data: [principal, totalInterest], backgroundColor: ['#0078D7','#dc3545'] }]
+    },
+    options: { responsive:true, plugins:{legend:{position:'bottom'}} }
+  });
+}
+function drawBalanceCompare(originalBalances, withPrepayBalances){
+  const ctx = document.getElementById('balanceCompareChart').getContext('2d');
+  if (balanceChart) balanceChart.destroy();
+  const maxLen = Math.max(originalBalances.length, withPrepayBalances.length);
+  const labels = Array.from({length:maxLen}, (_,i) => i+1);
+  const orig = Array.from({length:maxLen}, (_,i) => originalBalances[i] ?? 0);
+  const pre = Array.from({length:maxLen}, (_,i) => withPrepayBalances[i] ?? 0);
+  balanceChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Original Balance (no prepayment)', data: orig, borderColor:'#888888', tension:0.25, fill:false },
+        { label: 'With Prepayments', data: pre, borderColor:'#0078D7', tension:0.25, fill:false }
+      ]
+    },
+    options: {
+      responsive:true,
+      scales: {
+        y: { title: { display:true, text: 'Balance (₹)' }, beginAtZero:true }
+      },
+      plugins:{legend:{position:'bottom'}}
+    }
+  });
+}
+/* ---------------------------
+   Button actions
+   --------------------------- */
+function calculateEMI(){
+  const P = parseFloat(document.getElementById('loanAmount').value) || 0;
+  const annual = parseFloat(document.getElementById('interestRate').value) || 0;
+  const years = parseFloat(document.getElementById('tenureYears').value) || 0;
+  const { emi, months, monthlyRate } = calcEMI(P, annual, years);
+  if (!emi || !months){ document.getElementById('emiResult').innerHTML = 'Enter valid inputs.'; return; }
+  const totalPayment = emi * months;
+  const totalInterest = totalPayment - P;
+  document.getElementById('emiResult').innerHTML = `
+    Monthly EMI: <span class="small">${formatINR(emi)}</span> (${numberToWordsIndia(Math.round(emi))} Rupees)<br>
+    Total Payment (${months} months): <span class="small">${formatINR(totalPayment)}</span><br>
+    Total Interest: <span class="small">${formatINR(totalInterest)}</span> (${numberToWordsIndia(Math.round(totalInterest))} Rupees)
+  `;
+  // Pie chart
+  drawEmiPie(P, totalInterest);
+}
+// Calculate required extra per selected frequency to meet target months
+function calculateExtraPayment(){
+  const P = parseFloat(document.getElementById('loanAmount').value) || 0;
+  const annual = parseFloat(document.getElementById('interestRate').value) || 0;
+  const baseYears = parseFloat(document.getElementById('tenureYears').value) || 0;
+  const targetYears = parseFloat(document.getElementById('targetYears').value) || 0;
+  const freq = document.getElementById('frequency1').value;
+  if (!P || baseYears<=0 || targetYears<=0){ alert('Enter valid loan, base tenure and target tenure'); return; }
+  const baseMonths = Math.round(baseYears * 12);
+  const targetMonths = Math.round(targetYears * 12);
+  if (targetMonths >= baseMonths){
+    document.getElementById('extraPaymentResult').innerHTML = `Target duration must be less than base tenure (${baseYears} years). No extra needed.`;
+    return;
+  }
+  const { emi, monthlyRate } = calcEMI(P, annual, baseYears);
+  // fast check: if without extra loan already finishes within targetMonths, nothing needed
+  const noExtraSim = simulateAmortization({principal:P, monthlyRate, emi, stopAtMonths: targetMonths, maxMonths: targetMonths});
+  if (noExtraSim.monthsPaid && noExtraSim.monthsPaid < targetMonths && noExtraSim.balanceHistory[noExtraSim.balanceHistory.length-1] <= 0){
+    document.getElementById('extraPaymentResult').innerHTML = `No extra payment needed; loan would finish within target duration with current EMI.`;
+    return;
+  }
+  // Binary search for minimal extraPerPayment applied at chosen frequency such that balance <= 0 by targetMonths
+  let low = 0.0, high = P; // high bound: paying the whole principal at each extra (safe)
+  let best = high;
+  for (let i=0; i<70; i++){
+    const mid = (low + high) / 2;
+    const sim = simulateAmortization({ principal: P, monthlyRate, emi, stopAtMonths: targetMonths, extraPerPayment: mid, freq, maxMonths: targetMonths });
+    const finalBalance = sim.balanceHistory.length ? sim.balanceHistory[sim.balanceHistory.length-1] : (sim.monthsPaid ? 0 : P);
+    if (!sim.balanceHistory.length && sim.monthsPaid >= targetMonths){
+      // no payments recorded (rare), treat as not paid
+    }
+    // If final balance is zero or negative => paid off within target
+    if (sim.monthsPaid && (sim.balanceHistory[sim.balanceHistory.length-1] === 0 || sim.monthsPaid < targetMonths || (sim.monthsPaid === targetMonths && sim.balanceHistory[sim.balanceHistory.length-1] <= 1e-6))){
+      best = mid;
+      high = mid;
+    } else {
+      low = mid;
+    }
+  }
+  // Use best (high). Run final sim to compute actual totals and months-to-payoff (may be <= targetMonths)
+  const finalSim = simulateAmortization({ principal: P, monthlyRate, emi, extraPerPayment: high, freq, maxMonths: Math.max(600, targetMonths) });
+  // Compute totals precisely including last partial EMI if any
+  // finalSim.totalPaid already captured by simulateAmortization
+  const monthsPaid = finalSim.monthsPaid;
+  const extrasApplied = finalSim.extrasApplied;
+  const totalExtraPaid = extrasApplied * high;
+  const newTotalPaid = finalSim.totalPaid;
+  const newTotalInterest = finalSim.totalInterest;
+  const originalTotalPayment = emi * baseMonths;
+  const originalTotalInterest = originalTotalPayment - P;
+  const interestSaved = originalTotalInterest - newTotalInterest;
+  const yearsRounded = (monthsPaid/12).toFixed(2);
+  document.getElementById('extraPaymentResult').innerHTML = `
+    Required extra per ${freq}: <span class="small">${formatINR(high.toFixed(2))}</span> (${numberToWordsIndia(Math.round(high))} Rupees)<br>
+    Number of extra payments applied: ${extrasApplied} → Total Extra Paid: <span class="small">${formatINR(totalExtraPaid)}</span><br>
+    Loan will finish in <span class="small">${monthsPaid} months (${yearsRounded} years)</span><br>
+    New total paid: <span class="small">${formatINR(newTotalPaid)}</span> — Interest paid: <span class="small">${formatINR(newTotalInterest)}</span><br>
+    Interest saved vs original: <span class="small">${formatINR(Math.max(0, interestSaved))}</span> (${numberToWordsIndia(Math.round(Math.max(0, interestSaved)))})
+  `;
+  // Also show comparison charts for balances: original vs with extra
+  const origSim = simulateAmortization({ principal:P, monthlyRate, emi, maxMonths: Math.max(baseMonths, monthsPaid) });
+  drawBalanceCompare(origSim.balanceHistory, finalSim.balanceHistory);
+}
+// Estimate new tenure when adding recurring prepayments and show balances comparison
+function calculateReducedTenure(){
+  const P = parseFloat(document.getElementById('loanAmount').value) || 0;
+  const annual = parseFloat(document.getElementById('interestRate').value) || 0;
+  const years = parseFloat(document.getElementById('tenureYears').value) || 0;
+  const prepay = parseFloat(document.getElementById('prepaymentAmount').value) || 0;
+  const freq = document.getElementById('frequency2').value;
+  if (!P || years<=0 || prepay <= 0){ alert('Enter valid loan, tenure and prepayment amount'); return; }
+  const { emi, monthlyRate, months: baseMonths } = calcEMI(P, annual, years);
+  // Simulate original (no extra) until payoff to compute baseline totals
+  const origSim = simulateAmortization({ principal: P, monthlyRate, emi, maxMonths: 600 });
+  // Simulate with recurring prepayments
+  const preSim = simulateAmortization({ principal: P, monthlyRate, emi, extraPerPayment: prepay, freq, maxMonths: 600 });
+  const monthsOriginal = origSim.monthsPaid;
+  const monthsNew = preSim.monthsPaid;
+  const yearsNew = (monthsNew/12).toFixed(2);
+  const interestSaved = origSim.totalInterest - preSim.totalInterest;
+  const totalExtraPaid = preSim.extrasApplied * prepay;
+  document.getElementById('reducedTenureResult').innerHTML = `
+    Original Tenure: <span class="small">${monthsOriginal} months (${(monthsOriginal/12).toFixed(2)} years)</span><br>
+    New Tenure with recurring prepayment: <span class="small">${monthsNew} months (${yearsNew} years)</span><br>
+    Total Extra Paid: <span class="small">${formatINR(totalExtraPaid)}</span><br>
+    Interest Saved: <span class="small">${formatINR(Math.max(0, interestSaved))}</span> (${numberToWordsIndia(Math.round(Math.max(0, interestSaved)))})
+  `;
+  drawBalanceCompare(origSim.balanceHistory, preSim.balanceHistory);
+}
+function resetAll(){
+  // restore defaults (simple reset)
+  document.getElementById('loanAmount').value = 8000000;
+  document.getElementById('interestRate').value = 7.5;
+  document.getElementById('tenureYears').value = 12;
+  document.getElementById('targetYears').value = 6;
+  document.getElementById('prepaymentAmount').value = 120000;
+  document.getElementById('amountWords').innerText = '';
+  document.getElementById('prepaymentWords').innerText = '';
+  document.getElementById('emiResult').innerText = '';
+  document.getElementById('extraPaymentResult').innerText = '';
+  document.getElementById('reducedTenureResult').innerText = '';
+  if (emiPie) { emiPie.destroy(); emiPie = null; }
+  if (balanceChart) { balanceChart.destroy(); balanceChart = null; }
+}
+</script>
+</body>
+</html>
